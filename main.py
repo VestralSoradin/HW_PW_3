@@ -1,101 +1,50 @@
 import json
-from pprint import pprint
+import time
+
+import bs4
 import requests
 from bs4 import BeautifulSoup
-import unicodedata
+from fake_headers import Headers
 
-url = "https://spb.hh.ru/vacancy/86424068?from=vacancy_search_list&query=python"
-headers = {"Accept": "*/*",
-           "User-Agent": "Chrome"}
-symbol_list = []
-links_list = []
-links_sorted_list= []
-salary_list = []
-company_name_list = []
-location_list = []
-data_list = []
-
-def get_searching_links():
-    response = requests.get(url, headers=headers)
-    soup = BeautifulSoup(response.text, 'lxml')
-    vacancies = soup.find_all('a', class_='serp-item__title')
-    for vacancy in vacancies:
-        links = vacancy['href']
-        links_list.append(links)
-        response_links = requests.get(links, headers=headers)
-        links_parsed = BeautifulSoup(response_links.text, 'lxml')
-        descriptions = links_parsed.find('div', {'data-qa': 'vacancy-description'})
-        if not descriptions:
-            continue
-        if ('Django' or 'django' or 'Flask' or 'flask') in descriptions.text:
-            symbol_list.append('+')
-        else:
-            symbol_list.append('-')
-    for i, c in zip(links_list, symbol_list):
-        if c == "+":
-            links_sorted_list.append(i)
-    return links_sorted_list
-
-def get_salary():
-    for link in links_sorted_list:
-        salary_link = requests.get(link, headers=headers)
-        salary_parsed = BeautifulSoup(salary_link.text, 'lxml')
-        salary = salary_parsed.find('span', class_="bloko-header-section-2 bloko-header-section-2_lite")
-        if not salary:
-            continue
-        salary_text = salary.text
-        salary_normalized = unicodedata.normalize('NFKD', salary_text)
-        salary_list.append(salary_normalized)
-    return salary_list
-
-def get_company_name():
-    for link in links_sorted_list:
-        company_name_link = requests.get(link, headers=headers)
-        company_name_parsed = BeautifulSoup(company_name_link.text, 'lxml')
-        company_name_ = company_name_parsed.find('a', class_="bloko-link bloko-link_kind-tertiary")
-        if not company_name_:
-            continue
-        company_name = company_name_['href']
-        company_name_href = f'https://spb.hh.ru{company_name}'
-        company_name_link_2 = requests.get(company_name_href, headers=headers)
-        company_name_parsed_2 = BeautifulSoup(company_name_link_2.text, 'lxml')
-        company_name_2 = company_name_parsed_2.find('span', class_="company-header-title-name")
-        if not company_name_2:
-            continue
-        company_name_2_text = company_name_2.text
-        company_name_normalized = unicodedata.normalize('NFKD', company_name_2_text)
-        company_name_list.append(company_name_normalized)
-    return company_name_list
-
-def get_location():
-    for link in links_sorted_list:
-        location_link = requests.get(link, headers=headers)
-        location_parsed = BeautifulSoup(location_link.text, 'lxml')
-        location = location_parsed.find('p', {'data-qa': 'vacancy-view-location'})
-        if not location:
-            location = location_parsed.find('span', {'data-qa': 'vacancy-view-raw-address'})
-            if not location:
+DATA_URL = 'https://spb.hh.ru/search/vacancy?text=python&area=1&area=2'
+def get_vacancy(url, num_of_pages):
+    vacancy = []
+    salary_list = []
+    link_list = []
+    title_list = []
+    company_list = []
+    city_list = []
+    for page in range(num_of_pages):
+        headers = Headers(browser='firefox', os='win')
+        headers_data = headers.generate()
+        response = requests.get(f'{url}&page{page}', headers=headers_data).text
+        time.sleep(0.2)
+        main_page = bs4.BeautifulSoup(response, 'lxml')
+        link_main = main_page.find_all('div', class_='serp-item')
+        for tag in link_main:
+            link_find = tag.find('a')
+            link = link_find['href']
+            link_list.append(link)
+            salary = tag.find('span', attrs={'data-qa': 'vacancy-serp__vacancy-compensation'})
+            title = tag.find('h3').text
+            title_list.append(title)
+            if salary == None:
+                salary_list.append('no salary declared')
                 continue
-        location_text = location.text
-        location_list.append(location_text)
-    return location_list
+            salary_list.append(salary.text.replace('\u202f', ''))
+            company = tag.find('div', class_='bloko-text')
+            company_list.append(company.text.replace('\xa0', ' '))
+            city = tag.find('div', attrs={'data-qa': "vacancy-serp__vacancy-address"})
+            city_list.append(list(city)[0])
 
-def get_data(links_, salaries, companies_names, locations):
-    all_data = zip(links_, salaries, companies_names, locations)
-    for link, salary, company_name, location in all_data:
-        data_dict = {'link': link,
-                     'salary': salary,
-                     'company_name': company_name,
-                     'location': location}
-        data_list.append(data_dict)
-    return data_list
+        for a, b, c, d, e in zip(title_list, link_list, salary_list, company_list, city_list):
+            vacancy.append({'vacancy': a, 'link': b, 'salary': c, 'company': d, 'city': e})
+    return vacancy
+
+def json_writes(link, pages):
+    vacancy = get_vacancy(link, pages)
+    with open('vacancy_list.json', 'w', encoding='utf-8') as file:
+        json.dump(vacancy, file, indent=2, ensure_ascii=False)
 
 if __name__ == '__main__':
-    get_searching_links()
-    get_salary()
-    get_company_name()
-    get_location()
-    get_data(links_sorted_list, salary_list, company_name_list, location_list)
-
-with open('data_file.json', 'w', encoding='utf-8') as data:
-    json.dump(data_list, data, indent=2, ensure_ascii=False)
+    json_writes(DATA_URL, 5)
